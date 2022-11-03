@@ -1,149 +1,97 @@
-# Server with Login Exercise / Example
+# Obligatory assignment II, software security
+##1. Features
+You'll note that this project misses quite a bit of polish, especially in the front end. I haven't had too much time to
+work on this, so I decided to focus on the security part, and not the presentation.
 
-* Flask login docs: https://flask-login.readthedocs.io/en/latest/
-* Using "Log in with *social network*": https://python-social-auth.readthedocs.io/en/latest/configuration/flask.html
-* General Flask docs: https://flask.palletsprojects.com/en/2.2.x/quickstart/
+###1.1 Creating an account
+A register page (basically the same as the login page) has been added where a user can register themselves if they 
+haven't got an account.
 
-## TODO
-* Get it to run. You need `pip install flask flask_wtf flask_login`, and `flask run`. 
-* All the relevant source code is in `app.py` – it's the same as the SQL injection example, but with login and sessions added.
-* Connect to http://localhost:5000/ – it should redirect to a login page. Try logging in.
-* Check the Flask login docs, and add a `logout` route
-* Implement password checking. Now it uses plaintext passwords, stored as plaintext – find a secure way of storing passwords (i.e., with hashing and salt)
-* Optional: The user database is just a `dict` – you can change this to use the SQL database (just add a table and do database lookups instead of dict lookups)
-* Try restarting the server and reusing the login form in the browser. What happens? Why?
+###1.2 Logging in/out
+The main messaging part is only accessible for users that logged in. A user can log in with username and password, and 
+they will stay logged in using a session token in their cookies.
 
+###1.3 Send messages
+When logged in a User can start sending messages, and receive any messages send to them. To send a message the user has 
+to type a valid username in the recipient field (this can also be themselves) and a message to send. When retrieving 
+messages the user can only view messages sent to or by them.
 
--------
+###1.4 API endpoints
+If a user wishes they can use the API instead of the web-application. The API has 3 endpoints:
+1. ```/new``` Accepts POST requests to create a new message. Args: recipient & message
+2. ```/messages``` Accepts GET requests, retrieves a JSON object containing all messages belonging to the user
+3. ```/messages/ID``` Accepts GET requests, retrieves message with id = ID. If the message does not exist or does not 
+belong to the user it returns an empty object.
 
-## (was Tiny SQL Injectable Server Example)
+For all these requests authentication is required. Only basic auth headers are accepted containing username and password.
+There is no API-token implementation.
 
-[![';DROP TABLE students;--](https://imgs.xkcd.com/comics/exploits_of_a_mom.png)](https://xkcd.com/327/)
+##2. Security
+###2.1 Sessions
+Sessions are handled by flask, and all endpoints of the messaging service are protected by login checks. This protects 
+against unauthenticated access to some degree. But since Flask manages sessions with session tokens, it is theoretically
+possible for someone to guess the token of someone else and highjack their session.
 
-This project contains a tiny webserver with a little database. It's supposed to be a (crude) group messaging app (e.g., like a Discord channel), but the web api is limited to just two operations: `GET /search?q=<pattern>` to search for messages, and `POST /send` with paramaters `sender` and `message` to send a message.
+###2.2 Sql injections
+All database queries where a user can input anything are made to be prepared statements, so no sql injection is possible.
 
-For example, with the server running, this link will list all messages: http://localhost:5000/search?q=* 
-and this link will send a short message: http://localhost:5000/send?sender=Bob&message=Hi%2C%20Alice!
+###2.3 Cross-site scripting
+Cross site scripting is not possible in this implementation because of the fact that everything is html-safe escaped 
+before being displayed: 
+- messages get escaped before being stored in the database
+- usernames when they are retrieved from the database (only in the web-application, not for the API).
 
-Fortunately, there's a very nice front-end included (at http://localhost:5000/) so you can hack the server without having to mess with sending HTTP requests yourself.
+###2.4 Design
+The app is split into 3 types of python files:
+1. ```app.py``` Which starts and sets up the flask app.
+2. Controllers, which contain all endpoints and handle requests.
+3. Services, which can preform actions such as authentication or provide database access. By centralizing services we 
+avoid duplicate code (or worse, multiple different implementation of the same thing).
 
-## To use
-You need to install these Python packages first – [Flask](https://flask.palletsprojects.com/en/2.2.x/), [APSW](https://rogerbinns.github.io/apsw/), [Pygments](https://pygments.org/):
+Splitting makes the program easier to maintain, and built upon. And by splitting controllers it is easier to keep track 
+of which endpoints require which authorization. This way we also have all database connections handled in a single
+service, and no calls to the database are made anywhere else in the program.
 
-```shell
-pip install flask
-pip install apsw
-pip install pygments
-```
+###2.5 Impersonation
+There is only very limited ways to impersonate someone using this app: by choosing a username that is visually similar to 
+the original (example: emma - ernma). Since usernames must be unique, and the sender is determined by the app there is
+no other way of impersonation in the chat program (besides session high-jacking).
 
-## Start the Web Server
-Use the `flask` command to start the web server:
+###2.6 Logging in
+All users have a unique username (enforced in the database). 
+Whenever a user registers a secure random salt is generated for them and stored in the database together with the salted 
+& hashed password. This way the plain text password is never stored anywhere.
 
-```shell
-$ cd tiny-server
-$ flask run
-```
+###2.7 Authorization
+Whenever a user request messages from the server will identify the user and only provide them the messages 
+that are either send to/by them. Since this is done serverside based on the session, the user cannot access messages of 
+others.
 
-If the `flask` command doesn't exist, you can start use `python -m flask run` instead.
+##3. Vulnerabilities
+While the application is fairly simple I see 5 main vulnerabilities:
+1. The first one was already briefly mentioned before: One could hihghjack another's session by correctly guessing, or 
+obtaining their session token. While this is possible the tokens are temporary and very long, so I expect this risk to 
+be minimal.
+2. Since there are no rules for passwords, users might stick to simple passwords, which can be easily guessed by third 
+parties.
+3. While passwords are salted and hashed before being stored in the database, all messages are unencrypted. So if one 
+would get a copy of the database they can see who communicated with who, and can see the contents of their messages.
+4. During the logg in step a small randomized delay is added so a 'hacker' cannot know if the username they put in is 
+wrong, or if only the password is wrong (so a 'hacker' cannot tell by processing time which usernames exist). However,
+when sending a message the message requires a valid user to be the recipient or an error will be given. This can in turn
+thus be used to see which usernames exist. The only protection to this is that the 'hacker' has to have logged into an 
+account, which are very simple to make.
+5. There is no protection to DoS attacks. A user can make as many requests as they want in as short amount of time as
+they want, potentially hogging all the processing or network capabilities.
 
-```shell
-$ python -m flask run
- * Debug mode: off
-WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
- * Running on http://127.0.0.1:5000
-Press CTRL+C to quit
-```
+## How to test
+To start the application simply run:
+`flask run`
 
-Assuming it works, you should find the web server in your browser at http://localhost:5000/ 
+Most features can be tested and verified by using the web application:
+- Try injecting sql into any field (username, message, search) and see if something breaks
+- Try to add html tags to anything that gets printed on screen: usernames, or messages.
+- Try logging in with a wrong password
 
-(For server apps that aren't called `app.py`, you can add the `--app` option: `flask --app hello.py run`)
-
-**WARNING:** *Don't expose this example server to the internet – it's horribly insecure!*
-
-## Database
-
-You don't have to set up a database server or anything – we're using [SQLite](https://sqlite.org/index.html), which is embedded in the program (it's bundled with the APSW library, so you don't have to install anything).
-
-The database is stored in the file `./tiny.db` – if you wish, you can install the SQLite command line tools and examine it. If you need a fresh start, you can just delete the file, it will be created automatically.
-
-## The [Web Page](http://localhost:5000/)
-
-* The grey area at the top will show output from the server. The messaging app is in early stages of development, so the UI isn't entirely end-user friendly. The output from searching looks like this:
-
-```
-/search?q=* → 200 OK
-
-Query: SELECT * FROM messages WHERE message GLOB '*'
-
-Result:
-    [1, 'Bob', 'Hi, Alice!']
-```
-
-* At the bottom you'll find a simple form to interact with the server:
-
-   * The *Search* field takes a search pattern to search for message contents – or do arbitrary database operations if you're an INF226 student
-
-   * You can also add messages to the database with *From*/*Message*/*Send*.
-
-## Inject SQL into the Search Query
-
-* Use the *Send* button to see what a normal `INSERT` statement looks like, if you're unsure.
-* Try entering a search string that will add a new message. The server just inserts the search string between quotes `'…'`, so it's easy to trick it into running whatever you like.
-* You can also try the classic [DROP TABLE](https://xkcd.com/327/) trick. Just restart the server to reinitialize the tables (you can also delete the database file (`tiny.db`) to start fresh).
-  
-  
-For your convenience, the server will show you the actual SQL query it uses. This is not *entirely* unrealistic; you've probably seen (misconfigured) ASP.NET sites showing you a yellow error page with *“Server Error in '/' Application”* showing relevant bits of the source code / SQL query. That's a really bad idea, and could give an attack just the information needed to succeed with an injection attack. *Never* give any details in error messages from a network server!
-
-## Inject a new Annoucement
-
-* The app also supports ‘announcements’ that will be shown on top of the screen. Can you figure out how to add an announcement without looking at the source code?
-
-## Close the Security Hole
-
-SQLite and APSW (and practically any other SQL library) supports [prepared statements](https://en.wikipedia.org/wiki/Prepared_statement):
-
-```python
-cursor = conn.execute('SELECT * FROM people WHERE firstName = ?', (name,))
-cursor = conn.execute('INSERT INTO people (firstname,lastname) VALUES (?,?)', (fname,lname))
-```
-
-* Change `app.py` to use prepared statements, and check that the SQL injection attack no longer works.
-
-*Note:* There are a number of other nasty security problems with code, so don't think it's safe just because we patched the SQL injection hole.
-
-## Hints & Tips
-
-* For successful SQL injection, you might need to make sure that the full query (with injections) has valid SQL syntax – i.e., you need something to ‘swallow’ the final `';` from the original query. You can do this by ending your injected statement with `--` (which begins a comment) or a no-op command like `SELECT '`
-
-* If you tried this with Python's builtin `sqlite3` library (which is used in almost the same way as `apsw`), you'd find that the `'; DROP TABLE…` trick doesn't work – it simply won't accept multiple SQL statements in one query (so-called *stacked queries*). The same applies to many other SQL connection libraries, so the stacked query trick is unlikely to work on a modern system even if it's vulnerable to other SQL injection variants.
-
-* You may sometimes need to know what tables are available in the database. There is no SQL standard way of doing this – there's typically a special command for this in the database shell, and often it's possible to access the *schema* (table declarations) from inside SQL. For example,
-
-   * In SQLite, use `SELECT * FROM sqlite_schema;` (on the SQLite command line (`sqlite`), you can use `.tables` – but you can't run such commands through SQL injection)
-   * In PostgreSQL, use `SELECT * FROM pg_catalog.pg_tables;` (on the command line (`psql`), you can use `\dt` instead)
-   * For MariaDB / MySQL, theres a neat `SHOW TABLES;` SQL command
-
-## Automated Injection with [`sqlmap`](https://github.com/sqlmapproject/sqlmap)
-
-`sqlmap` is *“an open source penetration testing tool that automates the process of detecting and exploiting SQL injection flaws and taking over of database servers. It comes with a powerful detection engine, many niche features for the ultimate penetration tester, and a broad range of switches including database fingerprinting, over data fetching from the database, accessing the underlying file system, and executing commands on the operating system via out-of-band connections.”*
-
-It's written in Python and can be installed with `pip`:
-
-```shell
-pip install sqlmap
-```
-
-**WARNING:** *As with `pwntools`, **never** use `sqlmap` on a server without permission. It's illegal, unethical and may land you in a heap of trouble. Running it locally against this example server should be fine, however, and you can't ruin anything that you can't fix by deleting the database file and restarting the server.*
-
-To find injection exploits you must provide a URL with (at least) one parameter that might be suitable for injection. In our case, that might be `/search?q=*` (the parameter value should be valid and give a result, so `sqlmap` can tell the difference between a valid and invalid query). To try it, you can run something like:
-
-```shell
-python -m sqlmap.sqlmap --answers custom=N --technique=BEUS --tables -u http://localhost:5000/search?q=\* 
-```
-
-It will ask a few question (you can just accept the default answer), and it should then tell you it found a few exploits for the `q` parameter.
-
-* For more fun, try adding the `--sql-shell` argument to the command line – that should give you access to the SQLite database. For other databases, `sqlmap` may be able to read/write files or give you an OS shell on the server.
-
-* For even more, see the [`sqlmap` manual](https://github.com/sqlmapproject/sqlmap/wiki/Usage)
-
+For the API part I highly recommend using postman to create requests. Be sure to use the Basic Auth header using 
+username and password here.
